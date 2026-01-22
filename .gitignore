@@ -31,7 +31,6 @@ servo_logs/
 data/
 
 # 配置文件（包含个人标定数据，不上传）
-config.yaml
 handeye_result.txt
 tool_frame_params.txt
 realsense_neican.txt

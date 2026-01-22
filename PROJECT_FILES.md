@@ -281,7 +281,8 @@ git commit -m "Initial commit: FAIRINO FR5 Visual Servo System"
 ### 步骤5：推送到GitHub
 ```bash
 # 在GitHub创建仓库后
-git remote add origin https://github.com/YOUR_USERNAME/fairino-fr5-visual-servo.git
+git remote add origin https://github.com/lh6100/fairino-fr5-visual-servo.git
+
 git branch -M main
 git push -u origin main
 ```

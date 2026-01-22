@@ -9,7 +9,8 @@ import numpy as np
 import time
 from utils_math import (
     clamp, apply_deadband, exponential_decay, 
-    extract_yaw_from_rvec, normalize_angle, lpf_update
+    extract_yaw_from_rvec, extract_pitch_from_rvec, extract_roll_from_rvec,
+    normalize_angle, lpf_update
 )
 
 
@@ -34,10 +35,14 @@ class VisualServoController:
         self.k_y = ctrl_cfg.get('k_y', ctrl_cfg.get('k_xy', 1.0))  # 兼容旧配置
         self.k_z = ctrl_cfg.get('k_z', 1.0)
         self.k_yaw = ctrl_cfg.get('k_yaw', 0.5)
+        self.k_pitch = ctrl_cfg.get('k_pitch', 0.5)
+        self.k_roll = ctrl_cfg.get('k_roll', 0.5)
         
         # 目标
         self.z_des = target_cfg.get('z_des', 0.40)  # 米
         self.enable_yaw = target_cfg.get('enable_yaw', False)
+        self.enable_pitch = target_cfg.get('enable_pitch', False)
+        self.enable_roll = target_cfg.get('enable_roll', False)
         
         # 限幅（每 tick = 8ms）
         self.max_trans_mm_per_tick = ctrl_cfg.get('max_trans_mm_per_tick', 0.2)
@@ -135,14 +140,28 @@ class VisualServoController:
             yaw_des = 0.0  # 期望 yaw 角（可参数化）
             yaw_err = normalize_angle(yaw - yaw_des)
         
+        # pitch 误差（可选）
+        pitch_err = 0.0
+        if self.enable_pitch and rvec is not None:
+            pitch = extract_pitch_from_rvec(rvec)
+            pitch_des = 0.0  # 期望 pitch 角
+            pitch_err = normalize_angle(pitch - pitch_des)
+        
+        # roll 误差（可选）
+        roll_err = 0.0
+        if self.enable_roll and rvec is not None:
+            roll = extract_roll_from_rvec(rvec)
+            roll_des = 0.0  # 期望 roll 角
+            roll_err = normalize_angle(roll - roll_des)
+        
         # 低通滤波（可选）
         if self.enable_lpf:
-            raw_error = np.array([ex, ey, ez, yaw_err])
+            raw_error = np.array([ex, ey, ez, yaw_err, pitch_err, roll_err])
             if self.lpf_error is None:
                 self.lpf_error = raw_error
             else:
                 self.lpf_error = lpf_update(self.lpf_error, raw_error, self.lpf_alpha)
-            ex, ey, ez, yaw_err = self.lpf_error
+            ex, ey, ez, yaw_err, pitch_err, roll_err = self.lpf_error
         
         # 延迟预测（可选）
         if self.enable_prediction and self.is_initialized:
@@ -158,6 +177,8 @@ class VisualServoController:
         ey = apply_deadband(ey, self.deadband_px)
         ez = apply_deadband(ez, self.deadband_mm / 1000.0)  # 转为米
         yaw_err = apply_deadband(yaw_err, np.deg2rad(self.deadband_deg))
+        pitch_err = apply_deadband(pitch_err, np.deg2rad(self.deadband_deg))
+        roll_err = apply_deadband(roll_err, np.deg2rad(self.deadband_deg))
         
         # 控制律（相机坐标系）
         # 注意：像素误差 -> 速度的转换需要考虑深度
@@ -166,10 +187,14 @@ class VisualServoController:
         vy_cam = -self.k_y * ey / self.fy
         vz_cam = -self.k_z * ez
         
-        # 角速度（只控制 yaw，绕 Z 轴）
-        wx_cam = 0.0
-        wy_cam = 0.0
-        wz_cam = -self.k_yaw * yaw_err if self.enable_yaw else 0.0
+        # 角速度（roll绕X轴, pitch绕Y轴, yaw绕Z轴）
+        # ★已验证正确方向★：
+        #   Rx(roll):  wx_cam = +k_roll * roll_err   (正号，已确认)
+        #   Ry(pitch): wy_cam = -k_pitch * pitch_err (负号，已确认)
+        #   Rz(yaw):   wz_cam = +k_yaw * yaw_err     (正号，已确认)
+        wx_cam = self.k_roll * roll_err if self.enable_roll else 0.0
+        wy_cam = -self.k_pitch * pitch_err if self.enable_pitch else 0.0
+        wz_cam = self.k_yaw * yaw_err if self.enable_yaw else 0.0
         
         twist_cam = np.array([vx_cam, vy_cam, vz_cam, wx_cam, wy_cam, wz_cam])
         

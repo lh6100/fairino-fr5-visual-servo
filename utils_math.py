@@ -189,6 +189,36 @@ def extract_yaw_from_rvec(rvec):
     return yaw
 
 
+def extract_pitch_from_rvec(rvec):
+    """
+    从旋转向量中提取 pitch 角（绕Y轴旋转）
+    
+    Args:
+        rvec: 3x1 旋转向量
+    Returns:
+        pitch 角（弧度）
+    """
+    R_mat = rvec_to_rotation_matrix(rvec)
+    # ZYX欧拉角顺序，pitch = -asin(R20)
+    pitch = -np.arcsin(np.clip(R_mat[2, 0], -1.0, 1.0))
+    return pitch
+
+
+def extract_roll_from_rvec(rvec):
+    """
+    从旋转向量中提取 roll 角（绕X轴旋转）
+    
+    Args:
+        rvec: 3x1 旋转向量
+    Returns:
+        roll 角（弧度）
+    """
+    R_mat = rvec_to_rotation_matrix(rvec)
+    # ZYX欧拉角顺序，roll = atan2(R21, R22)
+    roll = np.arctan2(R_mat[2, 1], R_mat[2, 2])
+    return roll
+
+
 def lpf_update(prev_value, new_value, alpha):
     """
     一阶低通滤波
