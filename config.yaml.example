@@ -1,0 +1,84 @@
+# ============================================================================
+# FAIRINO FR5 + RealSense D435i 视觉伺服配置文件
+# ============================================================================
+
+# ---------- 机器人连接 ----------
+robot:
+  ip: "192.168.1.200"
+  cmdT: 0.008  # 伺服周期 8ms (125Hz)
+
+# ---------- 相机与Tag ----------
+camera:
+  fps: 30
+  width: 640
+  height: 480
+
+aruco:
+  dictionary: "DICT_4X4_50"  # 支持: DICT_4X4_50, DICT_6X6_250, DICT_ARUCO_ORIGINAL 等
+  tag_size: 0.05  # Tag边长（米），根据实际打印尺寸修改
+  target_id: 0   # -1=自动选择（最大面积），>=0=跟随指定ID
+
+# ---------- 控制目标 ----------
+target:
+  z_des: 0.40  # 期望距离（米）：相机到Tag的距离
+  enable_yaw: false  # 是否控制yaw（先调稳xy+z再开启）
+
+# ---------- 控制律增益（外环）----------
+controller:
+  # 像素误差->速度（相机系）- 独立控制每个轴
+  # XY双轴联合伺服，Z轴暂时关闭
+  use_handeye_transform: true  # 启用手眼变换（使用R转置）
+  k_x: 1.0    # X轴增益：启用（图像水平）
+  k_y: 1.0    # Y轴增益：启用（图像垂直）
+  k_z: 0.0    # Z轴增益：关闭，保持不动
+  k_yaw: 0.0  # yaw增益：关闭
+  
+  # 限幅（每8ms增量，工具坐标系）
+  max_trans_mm_per_tick: 0.15   # 平移最大增量 mm/8ms（降低避免112错误）
+  max_rot_deg_per_tick: 0.1    # 旋转最大增量 deg/8ms
+  
+  # 死区（避免到位抖动）
+  deadband_px: 2.0   # 像素误差死区
+  deadband_mm: 2.0   # 距离误差死区 mm
+  deadband_deg: 1.0  # yaw误差死区 deg
+  
+  # 过时数据处理
+  stale_timeout_ms: 50   # 超过此时间未更新视觉数据，认为过时
+  decay_tau_s: 0.10      # 指数衰减时间常数（秒）
+  
+  # 延迟预测（可选，实验性）
+  enable_prediction: false
+  prediction_horizon_ms: 20
+  
+  # 低通滤波（可选）
+  enable_lpf: false
+  lpf_alpha: 0.3  # 一阶低通滤波系数 (0-1)，值越小越平滑
+
+# ---------- 眼在手手眼标定外参 ----------
+# T_flange_cam: 法兰坐标系到相机坐标系的变换（4x4齐次矩阵）
+# 标定日期：2026-01-22，使用 handeye_calibration_eye_in_hand.py --use-flange 求解
+# 采集样本数：15，使用法兰坐标系（use_flange=true）
+handeye:
+  T_tool_cam:
+    # 旋转矩阵（3x3）+ 平移向量（3x1，单位米）
+    R:  # 旋转矩阵（行优先）
+      - [0.70938334, 0.64889781, 0.27514886]
+      - [-0.68033763, 0.73241045, 0.02675149]
+      - [-0.18416292, -0.20617119, 0.96102938]
+    t:  # 平移向量（米）
+      - -0.27946736
+      - -0.19983514
+      - -0.18401649
+
+# ---------- 手眼标定数据采集 ----------
+calib_collect:
+  save_dir: "calib_data"
+  num_poses: 15  # 建议采集姿态数量
+  wait_stable_s: 1.0  # 每次移动后等待稳定时间
+
+# ---------- 日志与调试 ----------
+debug:
+  enable_viz: true   # 实时显示图像与检测结果
+  print_freq_hz: 2.0  # 打印频率（Hz）
+  save_log: true     # 保存控制日志
+  log_dir: "servo_logs"

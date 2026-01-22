@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 数据文件（个人标定结果，不上传）
+*.npz
+*.jsonl
+handeye_logs/
+servo_logs/
+data/
+
+# 配置文件（包含个人标定数据，不上传）
+config.yaml
+handeye_result.txt
+tool_frame_params.txt
+realsense_neican.txt
+
+# 保留配置模板
+!config.yaml.example
+
+# 第三方库和SDK（不上传，用户自行安装）
+fairino/
+lib/
+include/
+*.so.*
+
+# IDE和编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 临时文件和测试
+test1.py
+test.py
+temp*.py
+aruco_2d_visual_servo_direction.md
+
+# 日志和输出
+*.log
+*.txt.bak
+
+# 保留重要文档
+!requirements.txt
+!README.md
+!LICENSE
