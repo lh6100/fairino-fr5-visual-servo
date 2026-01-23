@@ -169,21 +169,28 @@ class ArucoDetector:
         """
         vis = image.copy()
         
-        # === 绘制轨迹线 ===
-        if trajectory is not None and len(trajectory) > 1:
-            # 绘制轨迹线（青色）
+        # === 绘制运动轨迹点 ===
+        if trajectory is not None and len(trajectory) > 0:
             pts = np.array(trajectory, dtype=np.int32)
-            for i in range(1, len(pts)):
-                # 渐变颜色：旧的轨迹点更淡
-                alpha = i / len(pts)  # 0到1
-                color = (255, int(255 * alpha), 0)  # 青色到亮青色
-                thickness = max(1, int(2 * alpha))  # 越新越粗
-                cv2.line(vis, tuple(pts[i-1]), tuple(pts[i]), color, thickness)
             
-            # 标注起点（绿色圆圈）
-            cv2.circle(vis, tuple(pts[0]), 8, (0, 255, 0), 2)
-            cv2.putText(vis, "START", (pts[0][0] + 10, pts[0][1] - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            # 绘制轨迹点（渐变效果）
+            for i, pt in enumerate(pts):
+                # 计算透明度和大小：越新的点越大越亮
+                alpha = i / max(1, len(pts) - 1)  # 0到1
+                
+                # 颜色渐变：从暗青色（旧点）到亮青色（新点）
+                brightness = int(100 + 155 * alpha)  # 100-255
+                color = (brightness, brightness, 0)  # 青色系
+                
+                # 点的大小：越新越大
+                radius = int(2 + 4 * alpha)  # 2-6像素
+                
+                cv2.circle(vis, tuple(pt), radius, color, -1)  # 实心圆
+            
+            # 标注最新点（高亮显示）
+            if len(pts) > 0:
+                latest_pt = tuple(pts[-1])
+                cv2.circle(vis, latest_pt, 8, (0, 255, 255), 2)  # 黄色外圈
         
         if not detection_result['detected']:
             # 绘制 "No Tag Detected"

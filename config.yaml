@@ -87,3 +87,4 @@ debug:
   print_freq_hz: 2.0  # 打印频率（Hz）
   save_log: true     # 保存控制日志
   log_dir: "servo_logs"
+  verbose_log: false  # 详细日志模式（显示所有ROLL_DEBUG等调试信息，设为false则只显示INFO/WARNING/ERROR）

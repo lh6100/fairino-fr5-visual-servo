@@ -290,16 +290,17 @@ class VisualServoSystem:
                         # 执行伺服运动
                         success = self.robot.servo_cart(desc_pos)
                         
-                        # Roll专门调试：每30个tick（约0.24秒）输出一次完整状态
-                        self.roll_debug_counter += 1
-                        if self.roll_debug_counter >= 30 and self.config['target'].get('enable_roll', False):
-                            with self.vision_lock:
-                                det = self.latest_detection.copy()
-                            if det['detected'] and det.get('rvec') is not None:
-                                from utils_math import extract_roll_from_rvec
-                                roll = extract_roll_from_rvec(det['rvec'])
-                                print(f"[ROLL_STATUS] 当前状态: roll={np.rad2deg(roll):+7.2f}° | 最后命令: drx={desc_pos[3]:+7.3f}° | 控制增益: k_roll={self.controller.k_roll}")
-                            self.roll_debug_counter = 0
+                        # Roll状态监控：每30个tick（约0.24秒）输出一次状态（仅在verbose模式）
+                        if self.config.get('debug', {}).get('verbose_log', False):
+                            self.roll_debug_counter += 1
+                            if self.roll_debug_counter >= 30 and self.config['target'].get('enable_roll', False):
+                                with self.vision_lock:
+                                    det = self.latest_detection.copy()
+                                if det['detected'] and det.get('rvec') is not None:
+                                    from utils_math import extract_roll_from_rvec
+                                    roll = extract_roll_from_rvec(det['rvec'])
+                                    print(f"[ROLL_STATUS] 当前状态: roll={np.rad2deg(roll):+7.2f}° | 最后命令: drx={desc_pos[3]:+7.3f}° | 控制增益: k_roll={self.controller.k_roll}")
+                                self.roll_debug_counter = 0
                         
                         # 错误处理
                         if not success:
