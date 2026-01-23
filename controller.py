@@ -10,7 +10,7 @@ import time
 from utils_math import (
     clamp, apply_deadband, exponential_decay, 
     extract_yaw_from_rvec, extract_pitch_from_rvec, extract_roll_from_rvec,
-    normalize_angle, lpf_update
+    normalize_angle, lpf_update, lpf_update_angle
 )
 
 
@@ -87,12 +87,30 @@ class VisualServoController:
         self.is_initialized = False
         
         # 低通滤波状态
-        self.lpf_error = None  # [ex, ey, ez, yaw_err]
+        self.lpf_error = None  # [ex, ey, ez, yaw_err, pitch_err, roll_err]
+        
+        # Roll调试：记录上一次角度，检测突变
+        self.last_roll_raw = None
+        self.roll_jump_threshold = np.deg2rad(30)  # 突变阈值30度
+        
+        # Roll振荡检测
+        self.roll_err_history = []  # 记录最近的roll误差
+        self.roll_history_len = 10  # 记录长度
         
         print("[INFO] 视觉伺服控制器初始化完成")
         print(f"  增益: k_x={self.k_x}, k_y={self.k_y}, k_z={self.k_z}, k_yaw={self.k_yaw}")
-        print(f"  目标: z_des={self.z_des}m, enable_yaw={self.enable_yaw}")
+        print(f"       k_pitch={self.k_pitch}, k_roll={self.k_roll}")
+        print(f"  目标: z_des={self.z_des}m, enable_yaw={self.enable_yaw}, enable_pitch={self.enable_pitch}, enable_roll={self.enable_roll}")
         print(f"  限幅: trans={self.max_trans_mm_per_tick}mm/tick, rot={self.max_rot_deg_per_tick}deg/tick")
+        print(f"  死区: px={self.deadband_px}, mm={self.deadband_mm}, deg={self.deadband_deg}, roll_deg={self.deadband_roll_deg}")
+        if self.enable_roll:
+            print(f"\n  [ROLL配置] 启用Roll控制")
+            print(f"    增益 k_roll = {self.k_roll}")
+            print(f"    死区 = {self.deadband_roll_deg}°")
+            print(f"    手眼变换矩阵 R_cam_to_tool:")
+            print(f"      [{self.R_cam_to_tool[0,0]:+7.4f}, {self.R_cam_to_tool[0,1]:+7.4f}, {self.R_cam_to_tool[0,2]:+7.4f}]")
+            print(f"      [{self.R_cam_to_tool[1,0]:+7.4f}, {self.R_cam_to_tool[1,1]:+7.4f}, {self.R_cam_to_tool[1,2]:+7.4f}]")
+            print(f"      [{self.R_cam_to_tool[2,0]:+7.4f}, {self.R_cam_to_tool[2,1]:+7.4f}, {self.R_cam_to_tool[2,2]:+7.4f}]")
     
     def set_camera_intrinsics(self, fx, fy, cx, cy):
         """设置相机内参"""
@@ -150,10 +168,33 @@ class VisualServoController:
         
         # roll 误差（可选）
         roll_err = 0.0
+        roll_raw = 0.0
         if self.enable_roll and rvec is not None:
-            roll = extract_roll_from_rvec(rvec)
-            roll_des = 0.0  # 期望 roll 角
-            roll_err = normalize_angle(roll - roll_des)
+            roll_raw = extract_roll_from_rvec(rvec)
+            roll_des = 0.0  # 默认期望 roll 角
+            
+            # ⭐ 关键修复：当roll非常接近±180°时，自动调整目标为最近的±180°
+            # 这样可以避免从-178°到0°需要转178°的问题
+            # 只有在真正接近边界(±175°)时才调整，避免误判
+            if abs(roll_raw) > np.deg2rad(175):  # 当|roll| > 175°时
+                # 将目标设为最近的±180°
+                if roll_raw > 0:
+                    roll_des = np.pi  # +180°
+                else:
+                    roll_des = -np.pi  # -180°
+                print(f"[ROLL_DEBUG] 角度接近边界(>175°)，目标调整为: {np.rad2deg(roll_des):+.1f}°")
+            
+            # ★关键：使用normalize_angle确保计算最短角度差
+            roll_err = normalize_angle(roll_raw - roll_des)
+            
+            # 检测角度突变
+            if self.last_roll_raw is not None:
+                roll_diff = normalize_angle(roll_raw - self.last_roll_raw)
+                if abs(roll_diff) > self.roll_jump_threshold:
+                    print(f"[ROLL_WARNING] 检测到角度突变！diff={np.rad2deg(roll_diff):+7.2f}° (上次={np.rad2deg(self.last_roll_raw):+7.2f}° -> 当前={np.rad2deg(roll_raw):+7.2f}°)")
+            
+            self.last_roll_raw = roll_raw
+            print(f"[ROLL_DEBUG] 原始角度: roll={np.rad2deg(roll_raw):+7.2f}° | 目标: {np.rad2deg(roll_des):+7.2f}° | 误差(归一化后): roll_err={np.rad2deg(roll_err):+7.2f}°")
         
         # 低通滤波（可选）
         if self.enable_lpf:
@@ -161,8 +202,18 @@ class VisualServoController:
             if self.lpf_error is None:
                 self.lpf_error = raw_error
             else:
-                self.lpf_error = lpf_update(self.lpf_error, raw_error, self.lpf_alpha)
+                # 对位置误差使用普通滤波
+                self.lpf_error[0] = lpf_update(self.lpf_error[0], raw_error[0], self.lpf_alpha)
+                self.lpf_error[1] = lpf_update(self.lpf_error[1], raw_error[1], self.lpf_alpha)
+                self.lpf_error[2] = lpf_update(self.lpf_error[2], raw_error[2], self.lpf_alpha)
+                # ⭐ 关键修复：对角度误差使用专用的角度滤波器（处理±180°边界）
+                self.lpf_error[3] = lpf_update_angle(self.lpf_error[3], raw_error[3], self.lpf_alpha)  # yaw
+                self.lpf_error[4] = lpf_update_angle(self.lpf_error[4], raw_error[4], self.lpf_alpha)  # pitch
+                self.lpf_error[5] = lpf_update_angle(self.lpf_error[5], raw_error[5], self.lpf_alpha)  # roll
             ex, ey, ez, yaw_err, pitch_err, roll_err = self.lpf_error
+            
+            if self.enable_roll:
+                print(f"[ROLL_DEBUG] 低通滤波后(角度专用滤波器): roll_err={np.rad2deg(roll_err):+7.2f}°")
         
         # 延迟预测（可选）
         if self.enable_prediction and self.is_initialized:
@@ -179,7 +230,27 @@ class VisualServoController:
         ez = apply_deadband(ez, self.deadband_mm / 1000.0)  # 转为米
         yaw_err = apply_deadband(yaw_err, np.deg2rad(self.deadband_deg))
         pitch_err = apply_deadband(pitch_err, np.deg2rad(self.deadband_deg))
+        
+        # Roll专用死区处理（带详细日志）
+        roll_err_before_deadband = roll_err
         roll_err = apply_deadband(roll_err, np.deg2rad(self.deadband_roll_deg))  # 使用roll专用死区
+        if self.enable_roll:
+            # 记录roll误差历史
+            self.roll_err_history.append(roll_err)
+            if len(self.roll_err_history) > self.roll_history_len:
+                self.roll_err_history.pop(0)
+            
+            # 检测振荡：如果最近几次误差符号频繁变化
+            if len(self.roll_err_history) >= 5:
+                sign_changes = 0
+                for i in range(1, len(self.roll_err_history)):
+                    if abs(self.roll_err_history[i]) > 1e-6 and abs(self.roll_err_history[i-1]) > 1e-6:
+                        if np.sign(self.roll_err_history[i]) != np.sign(self.roll_err_history[i-1]):
+                            sign_changes += 1
+                if sign_changes >= 3:  # 如果有3次或更多符号变化
+                    print(f"[ROLL_WARNING] 检测到振荡！最近{len(self.roll_err_history)}次误差符号变化{sign_changes}次")
+            
+            print(f"[ROLL_DEBUG] 死区处理: 前={np.rad2deg(roll_err_before_deadband):+7.2f}° -> 后={np.rad2deg(roll_err):+7.2f}° (死区={self.deadband_roll_deg:.1f}°)")
         
         # 控制律（相机坐标系）
         # 注意：像素误差 -> 速度的转换需要考虑深度
@@ -196,6 +267,10 @@ class VisualServoController:
         wx_cam = self.k_roll * roll_err if self.enable_roll else 0.0
         wy_cam = -self.k_pitch * pitch_err if self.enable_pitch else 0.0
         wz_cam = self.k_yaw * yaw_err if self.enable_yaw else 0.0
+        
+        # Roll控制律详细日志
+        if self.enable_roll:
+            print(f"[ROLL_DEBUG] 控制律: wx_cam = k_roll({self.k_roll}) * roll_err({np.rad2deg(roll_err):+7.2f}°) = {wx_cam:+7.4f} rad/s = {np.rad2deg(wx_cam):+7.2f} deg/s")
         
         twist_cam = np.array([vx_cam, vy_cam, vz_cam, wx_cam, wy_cam, wz_cam])
         
@@ -248,19 +323,21 @@ class VisualServoController:
             # v_tool = R_cam_to_tool @ v_cam = R_tool_cam.T @ v_cam
             v_tool = self.R_cam_to_tool @ v_cam
             w_tool = self.R_cam_to_tool @ w_cam
+            
+            # Roll坐标变换详细日志
+            if np.any(np.abs(w_cam[0]) > 1e-6):  # wx_cam非零时才打印
+                print(f"[ROLL_DEBUG] 坐标变换: w_cam=[{w_cam[0]:+7.4f}, {w_cam[1]:+7.4f}, {w_cam[2]:+7.4f}] rad/s")
+                print(f"[ROLL_DEBUG]          -> w_tool=[{w_tool[0]:+7.4f}, {w_tool[1]:+7.4f}, {w_tool[2]:+7.4f}] rad/s")
+                print(f"[ROLL_DEBUG]          -> w_tool_deg=[{np.rad2deg(w_tool[0]):+7.2f}, {np.rad2deg(w_tool[1]):+7.2f}, {np.rad2deg(w_tool[2]):+7.2f}] deg/s")
         else:
             # 不变换（假设相机系=工具系，用于测试）
             v_tool = v_cam
             w_tool = w_cam
         
-        # 调试信息（显示变换前后对比）
-        if self.use_handeye_transform:
-            pass  # 在下方统一输出
-            # print(f"[DEBUG] v_cam={v_cam*1000:.3f}mm/s -> v_tool={v_tool*1000:.3f}mm/s")
-        
         # 计算增量
         delta_pos = v_tool * dt  # 米
         delta_rot = w_tool * dt  # 弧度
+        delta_rot_before_clamp = delta_rot.copy()
         
         # 限幅（按范数）
         delta_pos_norm = np.linalg.norm(delta_pos)
@@ -268,8 +345,16 @@ class VisualServoController:
             delta_pos *= (self.max_trans_mm_per_tick / 1000.0) / delta_pos_norm
         
         delta_rot_norm = np.linalg.norm(delta_rot)
+        was_clamped = False
         if delta_rot_norm > np.deg2rad(self.max_rot_deg_per_tick):
             delta_rot *= np.deg2rad(self.max_rot_deg_per_tick) / delta_rot_norm
+            was_clamped = True
+        
+        # Roll增量和限幅日志
+        if np.abs(delta_rot_before_clamp[0]) > 1e-6:
+            print(f"[ROLL_DEBUG] 增量计算: delta_rot_x = w_tool_x({w_tool[0]:+7.4f}) * dt({dt}) = {delta_rot_before_clamp[0]:+7.5f} rad = {np.rad2deg(delta_rot_before_clamp[0]):+7.3f}°")
+            if was_clamped:
+                print(f"[ROLL_DEBUG] 限幅: 前={np.rad2deg(delta_rot_before_clamp[0]):+7.3f}° -> 后={np.rad2deg(delta_rot[0]):+7.3f}° (范数限制={self.max_rot_deg_per_tick}°/tick)")
         
         # 单位转换：米 -> mm，弧度 -> 度
         delta_pos_mm = delta_pos * 1000.0

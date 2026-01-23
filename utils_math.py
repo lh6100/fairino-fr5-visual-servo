@@ -234,6 +234,25 @@ def lpf_update(prev_value, new_value, alpha):
     return alpha * new_value + (1.0 - alpha) * prev_value
 
 
+def lpf_update_angle(prev_angle, new_angle, alpha):
+    """
+    角度专用一阶低通滤波（处理±180°边界）
+    
+    Args:
+        prev_angle: 上一时刻滤波角度（弧度）
+        new_angle: 当前原始角度（弧度）
+        alpha: 滤波系数 (0-1)，越大越接近新值
+    Returns:
+        滤波后的角度（弧度）
+    """
+    # 计算最短角度差
+    diff = normalize_angle(new_angle - prev_angle)
+    # 基于差值进行滤波
+    filtered = prev_angle + alpha * diff
+    # 归一化结果
+    return normalize_angle(filtered)
+
+
 if __name__ == "__main__":
     # 单元测试
     print("=== utils_math.py 单元测试 ===")

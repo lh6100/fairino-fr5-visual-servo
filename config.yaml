@@ -35,7 +35,7 @@ controller:
   k_z: -1.0      # Z轴增益：负值（已验证）✓
   k_yaw: 0.5     # yaw增益：正值（已验证）✓
   k_pitch: -0.5  # pitch增益：负值（已验证）✓
-  k_roll: -0.5   # roll增益：负值（已验证，需大死区）✓
+  k_roll: -0.2   # roll增益：降低到-0.2，更平稳的收敛
   
   # 限幅（每8ms增量，工具坐标系）
   max_trans_mm_per_tick: 0.35   # 平移最大增量
@@ -45,7 +45,7 @@ controller:
   deadband_px: 5.0   # 像素误差死区，大死区防止到位震荡
   deadband_mm: 5.0   # 距离误差死区，大死区
   deadband_deg: 5.0  # 旋转误差死区（yaw/pitch）
-  deadband_roll_deg: 30.0  # roll专用死区（更大，防止振荡）
+  deadband_roll_deg: 5.0  # roll死区：降低到5°，允许收敛，但仍能防止到位震荡
   
   # 过时数据处理
   stale_timeout_ms: 50   # 超过此时间未更新视觉数据，认为过时

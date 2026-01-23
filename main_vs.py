@@ -65,6 +65,9 @@ class VisualServoSystem:
         self.control_hz = 0.0
         self.last_print_time = 0
         
+        # Roll调试统计
+        self.roll_debug_counter = 0
+        
     def initialize(self):
         """初始化所有硬件和软件组件"""
         print("\n[1/5] 初始化机器人连接...")
@@ -287,6 +290,17 @@ class VisualServoSystem:
                         # 执行伺服运动
                         success = self.robot.servo_cart(desc_pos)
                         
+                        # Roll专门调试：每30个tick（约0.24秒）输出一次完整状态
+                        self.roll_debug_counter += 1
+                        if self.roll_debug_counter >= 30 and self.config['target'].get('enable_roll', False):
+                            with self.vision_lock:
+                                det = self.latest_detection.copy()
+                            if det['detected'] and det.get('rvec') is not None:
+                                from utils_math import extract_roll_from_rvec
+                                roll = extract_roll_from_rvec(det['rvec'])
+                                print(f"[ROLL_STATUS] 当前状态: roll={np.rad2deg(roll):+7.2f}° | 最后命令: drx={desc_pos[3]:+7.3f}° | 控制增益: k_roll={self.controller.k_roll}")
+                            self.roll_debug_counter = 0
+                        
                         # 错误处理
                         if not success:
                             error_count += 1
@@ -343,14 +357,31 @@ class VisualServoSystem:
                 u, v = detection['center_px']
                 z = detection['tvec'][2] if detection['tvec'] is not None else 0
                 tag_id = detection['tag_id']
+                rvec = detection.get('rvec')
                 
                 ex = u - self.camera_matrix[0, 2]
                 ey = v - self.camera_matrix[1, 2]
                 ez = (z - self.config['target']['z_des']) * 1000  # mm
                 
+                # 提取姿态角（如果启用）
+                roll_str = ""
+                pitch_str = ""
+                yaw_str = ""
+                if rvec is not None:
+                    from utils_math import extract_roll_from_rvec, extract_pitch_from_rvec, extract_yaw_from_rvec
+                    if self.config['target'].get('enable_roll', False):
+                        roll = extract_roll_from_rvec(rvec)
+                        roll_str = f" Roll:{np.rad2deg(roll):+6.1f}°"
+                    if self.config['target'].get('enable_pitch', False):
+                        pitch = extract_pitch_from_rvec(rvec)
+                        pitch_str = f" Pitch:{np.rad2deg(pitch):+6.1f}°"
+                    if self.config['target'].get('enable_yaw', False):
+                        yaw = extract_yaw_from_rvec(rvec)
+                        yaw_str = f" Yaw:{np.rad2deg(yaw):+6.1f}°"
+                
                 print(f"{status_prefix} FPS:{self.vision_fps:.1f} Hz:{self.control_hz:.1f} | "
                       f"ID:{tag_id} | err_px:[{ex:+6.1f}, {ey:+6.1f}] err_z:{ez:+6.1f}mm | "
-                      f"Z:{z*1000:.1f}mm")
+                      f"Z:{z*1000:.1f}mm{roll_str}{pitch_str}{yaw_str}")
             else:
                 print(f"{status_prefix} FPS:{self.vision_fps:.1f} Hz:{self.control_hz:.1f} | "
                       f"No Tag Detected")
