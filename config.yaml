@@ -21,30 +21,31 @@ aruco:
 # ---------- 控制目标 ----------
 target:
   z_des: 0.40  # 期望距离（米）：相机到Tag的距离
-  enable_yaw: true     # 启用yaw控制(Rz)
-  enable_pitch: true   # 启用pitch控制(Ry)
-  enable_roll: false   # 禁用roll（Rx不稳定，暂不使用）
+  enable_yaw: true     # 启用yaw控制（Rz）✓
+  enable_pitch: true   # 启用pitch控制（Ry）✓
+  enable_roll: false   # 禁用roll（Rx存在物理耦合，无法稳定收敛）
 
 # ---------- 控制律增益（外环）----------
 controller:
   # 像素误差->速度（相机系）- 独立控制每个轴
-  # XYZ平移 + Yaw+Pitch旋转，5自由度联合控制
-  use_handeye_transform: true  # 启用手眼变换（使用R转置）
-  k_x: 6.0       # X轴增益：已验证稳定
-  k_y: 6.0       # Y轴增益：已验证稳定
-  k_z: -7.0      # Z轴增益：负值，已验证
-  k_yaw: 0.5     # yaw增益：已验证稳定
-  k_pitch: 0.5   # pitch增益：已验证稳定
-  k_roll: 0.0    # roll增益：禁用（不稳定）
+  # 6自由度联合控制（新标定后已全部验证）
+  use_handeye_transform: true  # 启用手眼变换（使用修正后的坐标系）
+  k_x: -1.0      # X轴增益：负值（已验证）✓
+  k_y: -1.0      # Y轴增益：负值（已验证）✓
+  k_z: -1.0      # Z轴增益：负值（已验证）✓
+  k_yaw: 0.5     # yaw增益：正值（已验证）✓
+  k_pitch: -0.5  # pitch增益：负值（已验证）✓
+  k_roll: -0.5   # roll增益：负值（已验证，需大死区）✓
   
   # 限幅（每8ms增量，工具坐标系）
   max_trans_mm_per_tick: 0.35   # 平移最大增量
-  max_rot_deg_per_tick: 0.15    # 旋转最大增量，适中yaw/pitch
+  max_rot_deg_per_tick: 0.1    # 旋转最大增量（降低至1/5，防止roll振荡）
   
   # 死区（避免到位抖动）- 大死区是关键！
   deadband_px: 5.0   # 像素误差死区，大死区防止到位震荡
   deadband_mm: 5.0   # 距离误差死区，大死区
-  deadband_deg: 10.0 # 旋转误差死区，适中yaw/pitch
+  deadband_deg: 5.0  # 旋转误差死区（yaw/pitch）
+  deadband_roll_deg: 30.0  # roll专用死区（更大，防止振荡）
   
   # 过时数据处理
   stale_timeout_ms: 50   # 超过此时间未更新视觉数据，认为过时
@@ -60,19 +61,19 @@ controller:
 
 # ---------- 眼在手手眼标定外参 ----------
 # T_flange_cam: 法兰坐标系到相机坐标系的变换（4x4齐次矩阵）
-# 标定日期：2026-01-22，使用 handeye_calibration_eye_in_hand.py --use-flange 求解
-# 采集样本数：15，使用法兰坐标系（use_flange=true）
+# 标定日期：2026-01-23（坐标系修正后），使用 handeye_calibration_eye_in_hand.py --use-flange
+# 关键修正：Z平移现为正值（+49.97mm），符合相机在法兰下方的物理事实 ✓
 handeye:
   T_tool_cam:
     # 旋转矩阵（3x3）+ 平移向量（3x1，单位米）
     R:  # 旋转矩阵（行优先）
-      - [0.70938334, 0.64889781, 0.27514886]
-      - [-0.68033763, 0.73241045, 0.02675149]
-      - [-0.18416292, -0.20617119, 0.96102938]
+      - [0.99827958, 0.01690417, -0.05614389]
+      - [-0.01182179, 0.99590292, 0.08965275]
+      - [0.05742937, -0.08883479, 0.99438938]
     t:  # 平移向量（米）
-      - -0.27946736
-      - -0.19983514
-      - -0.18401649
+      - -0.02020931
+      - -0.06249392
+      - 0.04996680
 
 # ---------- 手眼标定数据采集 ----------
 calib_collect:

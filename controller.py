@@ -52,6 +52,7 @@ class VisualServoController:
         self.deadband_px = ctrl_cfg.get('deadband_px', 2.0)
         self.deadband_mm = ctrl_cfg.get('deadband_mm', 2.0)
         self.deadband_deg = ctrl_cfg.get('deadband_deg', 1.0)
+        self.deadband_roll_deg = ctrl_cfg.get('deadband_roll_deg', self.deadband_deg)  # roll专用死区
         
         # 过时处理
         self.stale_timeout_ms = ctrl_cfg.get('stale_timeout_ms', 50)
@@ -178,7 +179,7 @@ class VisualServoController:
         ez = apply_deadband(ez, self.deadband_mm / 1000.0)  # 转为米
         yaw_err = apply_deadband(yaw_err, np.deg2rad(self.deadband_deg))
         pitch_err = apply_deadband(pitch_err, np.deg2rad(self.deadband_deg))
-        roll_err = apply_deadband(roll_err, np.deg2rad(self.deadband_deg))
+        roll_err = apply_deadband(roll_err, np.deg2rad(self.deadband_roll_deg))  # 使用roll专用死区
         
         # 控制律（相机坐标系）
         # 注意：像素误差 -> 速度的转换需要考虑深度

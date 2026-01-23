@@ -73,6 +73,16 @@ def rpy_to_matrix(roll, pitch, yaw):
 def pose_to_gripper2base(
     pose_mm_deg: List[float], angle_type: str
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    将机器人姿态转换为 base→gripper(flange) 的变换
+    
+    Args:
+        pose_mm_deg: GetActualToolFlangePose() 返回的 [x,y,z,rx,ry,rz]
+                     已经是 base→flange，无需求逆！
+    Returns:
+        r_gripper2base: 旋转矩阵 (base→gripper)
+        t_gripper2base: 平移向量 (base→gripper，单位米)
+    """
     x, y, z, rx, ry, rz = pose_mm_deg
     t_base_gripper = np.array([x, y, z], dtype=np.float64).reshape(3, 1) / 1000.0
 
@@ -86,8 +96,9 @@ def pose_to_gripper2base(
     else:
         raise ValueError("angle_type must be 'rpy' or 'rotvec'")
 
-    r_gripper2base = rmat.T
-    t_gripper2base = -rmat.T @ t_base_gripper
+    # 关键修正：GetActualToolFlangePose() 已经返回 base→flange，直接使用！
+    r_gripper2base = rmat  # 修正：不要转置
+    t_gripper2base = t_base_gripper  # 修正：不要取反
     return r_gripper2base, t_gripper2base
 
 
