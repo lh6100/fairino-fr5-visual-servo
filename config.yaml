@@ -10,8 +10,8 @@ robot:
 # ---------- 相机与Tag ----------
 camera:
   fps: 30
-  width: 640
-  height: 480
+  width: 1280  # 720p分辨率
+  height: 720
 
 aruco:
   dictionary: "DICT_4X4_50"  # 支持: DICT_4X4_50, DICT_6X6_250, DICT_ARUCO_ORIGINAL 等
@@ -30,20 +30,20 @@ controller:
   # 像素误差->速度（相机系）- 独立控制每个轴
   # 6自由度联合控制（新标定后已全部验证）
   use_handeye_transform: true  # 启用手眼变换（使用修正后的坐标系）
-  k_x: -1.0      # X轴增益：负值（已验证）✓
-  k_y: -1.0      # Y轴增益：负值（已验证）✓
-  k_z: -1.0      # Z轴增益：负值（已验证）✓
+  k_x: -2.5      # X轴增益：平衡速度与稳定性
+  k_y: -2.5      # Y轴增益：平衡速度与稳定性
+  k_z: -2.0      # Z轴增益：平衡速度与稳定性
   k_yaw: 0.5     # yaw增益：正值（已验证）✓
   k_pitch: -0.5  # pitch增益：负值（已验证）✓
   k_roll: -0.2   # roll增益：降低到-0.2，更平稳的收敛
   
   # 限幅（每8ms增量，工具坐标系）
-  max_trans_mm_per_tick: 0.35   # 平移最大增量
-  max_rot_deg_per_tick: 0.1    # 旋转最大增量（降低至1/5，防止roll振荡）
+  max_trans_mm_per_tick: 0.8   # 平移最大增量：100mm/s，快速且稳定
+  max_rot_deg_per_tick: 0.15   # 旋转最大增量：适当提高到0.15
   
   # 死区（避免到位抖动）- 大死区是关键！
-  deadband_px: 5.0   # 像素误差死区，大死区防止到位震荡
-  deadband_mm: 5.0   # 距离误差死区，大死区
+  deadband_px: 5.0   # 像素误差死区：提高到5.0防止震荡
+  deadband_mm: 5.0   # 距离误差死区：提高到5.0防止震荡
   deadband_deg: 5.0  # 旋转误差死区（yaw/pitch）
   deadband_roll_deg: 5.0  # roll死区：降低到5°，允许收敛，但仍能防止到位震荡
   
@@ -57,7 +57,7 @@ controller:
   
   # 低通滤波（必须开启）- 平滑快速控制
   enable_lpf: true
-  lpf_alpha: 0.3  # 增强滤波，防止roll抖动
+  lpf_alpha: 0.5  # 增强滤波到0.5，减少震荡
 
 # ---------- 眼在手手眼标定外参 ----------
 # T_flange_cam: 法兰坐标系到相机坐标系的变换（4x4齐次矩阵）
