@@ -20,7 +20,7 @@ aruco:
 
 # ---------- 控制目标 ----------
 target:
-  z_des: 0.40  # 期望距离（米）：相机到Tag的距离
+  z_des: 0.50  # 期望距离（米）：相机到Tag的距离
   enable_yaw: true     # 启用yaw控制（Rz）✓
   enable_pitch: true   # 启用pitch控制（Ry）✓
   enable_roll: false   # 禁用roll（Rx存在物理耦合，无法稳定收敛）
@@ -33,6 +33,12 @@ controller:
   k_x: -2.5      # X轴增益：平衡速度与稳定性
   k_y: -2.5      # Y轴增益：平衡速度与稳定性
   k_z: -2.0      # Z轴增益：平衡速度与稳定性
+  
+  # 自适应增益（远距离快速收敛，近距离平稳精确）
+  enable_adaptive_gain: true    # 启用自适应增益
+  k_x_far: -6.0     # 远距离X轴增益（误差>阈值时）
+  k_y_far: -6.0     # 远距离Y轴增益（误差>阈值时）
+  adaptive_threshold_px: 30.0   # 自适应切换阈值（像素），超过此值使用远距离增益
   k_yaw: 0.5     # yaw增益：正值（已验证）✓
   k_pitch: -0.5  # pitch增益：负值（已验证）✓
   k_roll: -0.2   # roll增益：降低到-0.2，更平稳的收敛

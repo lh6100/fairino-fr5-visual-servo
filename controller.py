@@ -38,6 +38,12 @@ class VisualServoController:
         self.k_pitch = ctrl_cfg.get('k_pitch', 0.5)
         self.k_roll = ctrl_cfg.get('k_roll', 0.5)
         
+        # 自适应增益（远距离快速收敛，近距离平稳）
+        self.enable_adaptive_gain = ctrl_cfg.get('enable_adaptive_gain', False)
+        self.k_x_far = ctrl_cfg.get('k_x_far', self.k_x * 2.0)  # 默认为2倍
+        self.k_y_far = ctrl_cfg.get('k_y_far', self.k_y * 2.0)
+        self.adaptive_threshold_px = ctrl_cfg.get('adaptive_threshold_px', 30.0)
+        
         # 目标
         self.z_des = target_cfg.get('z_des', 0.40)  # 米
         self.enable_yaw = target_cfg.get('enable_yaw', False)
@@ -260,8 +266,26 @@ class VisualServoController:
         # 控制律（相机坐标系）
         # 注意：像素误差 -> 速度的转换需要考虑深度
         # v = -k * (u - u_des) / f  （近似）
-        vx_cam = -self.k_x * ex / self.fx
-        vy_cam = -self.k_y * ey / self.fy
+        
+        # 自适应增益：根据误差大小动态调整
+        k_x_adaptive = self.k_x
+        k_y_adaptive = self.k_y
+        if self.enable_adaptive_gain:
+            # 计算欧氏距离误差
+            err_magnitude = np.sqrt(ex**2 + ey**2)
+            if err_magnitude > self.adaptive_threshold_px:
+                # 远距离：使用大增益快速接近
+                k_x_adaptive = self.k_x_far
+                k_y_adaptive = self.k_y_far
+                if self.debug_log:
+                    print(f"[ADAPTIVE] 远距离模式: err={err_magnitude:.1f}px > {self.adaptive_threshold_px:.1f}px, 使用增益 k_x={k_x_adaptive:.1f}, k_y={k_y_adaptive:.1f}")
+            else:
+                # 近距离：使用小增益精确定位
+                if self.debug_log:
+                    print(f"[ADAPTIVE] 近距离模式: err={err_magnitude:.1f}px ≤ {self.adaptive_threshold_px:.1f}px, 使用增益 k_x={k_x_adaptive:.1f}, k_y={k_y_adaptive:.1f}")
+        
+        vx_cam = -k_x_adaptive * ex / self.fx
+        vy_cam = -k_y_adaptive * ey / self.fy
         vz_cam = -self.k_z * ez
         
         # 角速度（roll绕X轴, pitch绕Y轴, yaw绕Z轴）
