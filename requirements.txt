@@ -1,6 +1,7 @@
-numpy>=1.21.0
+numpy>=1.23.0
 opencv-python>=4.5.0
 opencv-contrib-python>=4.5.0
 pyrealsense2>=2.50.0
 pyyaml>=5.4.0
 scipy>=1.7.0
+matplotlib>=3.5.0

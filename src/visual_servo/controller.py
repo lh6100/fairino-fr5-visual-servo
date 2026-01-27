@@ -7,7 +7,7 @@ controller.py - 视觉伺服控制器
 
 import numpy as np
 import time
-from utils_math import (
+from .utils_math import (
     clamp, apply_deadband, exponential_decay, 
     extract_yaw_from_rvec, extract_pitch_from_rvec, extract_roll_from_rvec,
     normalize_angle, lpf_update, lpf_update_angle

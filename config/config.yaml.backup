@@ -90,6 +90,7 @@ calib_collect:
 # ---------- 日志与调试 ----------
 debug:
   enable_viz: true   # 实时显示图像与检测结果
+  enable_realtime_plot: true  # 启用实时曲线绘图（监测速度和误差）
   print_freq_hz: 2.0  # 打印频率（Hz）
   save_log: true     # 保存控制日志
   log_dir: "servo_logs"

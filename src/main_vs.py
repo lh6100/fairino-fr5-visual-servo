@@ -15,11 +15,12 @@ import cv2
 import numpy as np
 import pyrealsense2 as rs
 
-from fr5_driver import FR5Driver
-from aruco_detector import ArucoDetector
-from controller import VisualServoController
-from handeye_io import load_handeye_transform, save_calibration_sample
-from utils_math import build_transform_matrix
+from visual_servo.fr5_driver import FR5Driver
+from visual_servo.aruco_detector import ArucoDetector
+from visual_servo.controller import VisualServoController
+from visual_servo.handeye_io import load_handeye_transform, save_calibration_sample
+from visual_servo.utils_math import build_transform_matrix
+from visual_servo.realtime_plotter import RealtimePlotter
 
 
 class VisualServoSystem:
@@ -45,6 +46,8 @@ class VisualServoSystem:
         self.pipeline = None
         self.detector = None
         self.controller = None
+        self.plotter = None  # 实时绘图器
+        self.plotter = None  # 实时绘图器
         
         # 线程控制
         self.running = False
@@ -234,6 +237,12 @@ class VisualServoSystem:
                     if key == ord('q'):
                         print("\n[INFO] 检测到 'q' 键，准备退出...")
                         self.running = False
+                        # 立即关闭OpenCV窗口，避免卡顿
+                        cv2.destroyWindow("Visual Servo")
+                        break  # 退出视觉循环
+                        # 立即关闭OpenCV窗口，避免卡顿
+                        cv2.destroyWindow("Visual Servo")
+                        break  # 退出视觉循环
                     elif key == ord('s'):
                         self.servo_enabled = True
                         self.trajectory = []  # 清空轨迹，重新记录
@@ -281,6 +290,24 @@ class VisualServoSystem:
                     
                     # 下发指令
                     if desc_pos is not None:
+                        # 记录数据到绘图器（如果启用）
+                        if self.plotter is not None:
+                            with self.vision_lock:
+                                det = self.latest_detection
+                            if det['detected']:
+                                # 计算速度（mm/s）
+                                vx = desc_pos[0] / dt  # mm/s
+                                vy = desc_pos[1] / dt
+                                vz = desc_pos[2] / dt
+                                
+                                # 获取图像误差
+                                u, v = det['center_px']
+                                ex = u - self.controller.cx
+                                ey = v - self.controller.cy
+                                ez = (det['tvec'][2] - self.controller.z_des) * 1000.0  # mm
+                                
+                                self.plotter.add_data(vx, vy, vz, ex, ey, ez, time.time())
+                        
                         # 调试：每1秒打印一次指令
                         if tick_count % 125 == 0:  # 125Hz -> 每秒1次
                             print(f"[DEBUG] 工具系增量(mm,deg): "
@@ -297,7 +324,7 @@ class VisualServoSystem:
                                 with self.vision_lock:
                                     det = self.latest_detection.copy()
                                 if det['detected'] and det.get('rvec') is not None:
-                                    from utils_math import extract_roll_from_rvec
+                                    from visual_servo.utils_math import extract_roll_from_rvec
                                     roll = extract_roll_from_rvec(det['rvec'])
                                     print(f"[ROLL_STATUS] 当前状态: roll={np.rad2deg(roll):+7.2f}° | 最后命令: drx={desc_pos[3]:+7.3f}° | 控制增益: k_roll={self.controller.k_roll}")
                                 self.roll_debug_counter = 0
@@ -369,7 +396,7 @@ class VisualServoSystem:
                 pitch_str = ""
                 yaw_str = ""
                 if rvec is not None:
-                    from utils_math import extract_roll_from_rvec, extract_pitch_from_rvec, extract_yaw_from_rvec
+                    from visual_servo.utils_math import extract_roll_from_rvec, extract_pitch_from_rvec, extract_yaw_from_rvec
                     if self.config['target'].get('enable_roll', False):
                         roll = extract_roll_from_rvec(rvec)
                         roll_str = f" Roll:{np.rad2deg(roll):+6.1f}°"
@@ -377,6 +404,8 @@ class VisualServoSystem:
                         pitch = extract_pitch_from_rvec(rvec)
                         pitch_str = f" Pitch:{np.rad2deg(pitch):+6.1f}°"
                     if self.config['target'].get('enable_yaw', False):
+                        yaw = extract_yaw_from_rvec(rvec)
+                        yaw_str = f" Yaw:{np.rad2deg(yaw):+6.1f}°"
                         yaw = extract_yaw_from_rvec(rvec)
                         yaw_str = f" Yaw:{np.rad2deg(yaw):+6.1f}°"
                 
@@ -394,6 +423,12 @@ class VisualServoSystem:
         print("[INFO] 启动视觉伺服系统...")
         
         self.running = True
+        
+        # 启动实时绘图器（如果配置启用）
+        if self.config['debug'].get('enable_realtime_plot', True):
+            print("\n[启动] 实时监测曲线绘图器...")
+            self.plotter = RealtimePlotter(max_points=300, update_interval=50)
+            self.plotter.start()
         
         # 启动视觉线程
         self.vision_thread = threading.Thread(target=self.vision_loop, daemon=True)
@@ -426,11 +461,21 @@ class VisualServoSystem:
         
         self.running = False
         
-        # 等待线程结束
+        # 先关闭绘图器（后台线程，快速）
+        if self.plotter:
+            self.plotter.stop()
+            print("  ✓ 绘图器已关闭")
+        
+        # 立即关闭所有OpenCV窗口
+        cv2.destroyAllWindows()
+        cv2.waitKey(1)  # 强制刷新事件队列
+        print("  ✓ 图像窗口已关闭")
+        
+        # 等待线程结束（缩短超时时间）
         if self.vision_thread is not None:
-            self.vision_thread.join(timeout=2.0)
+            self.vision_thread.join(timeout=0.5)
         if self.control_thread is not None:
-            self.control_thread.join(timeout=2.0)
+            self.control_thread.join(timeout=0.5)
         
         # 关闭硬件
         if self.robot is not None:
@@ -440,15 +485,13 @@ class VisualServoSystem:
         if self.pipeline is not None:
             self.pipeline.stop()
         
-        cv2.destroyAllWindows()
-        
-        print("[INFO] 系统已安全退出\n")
+        print("\n[INFO] 系统已安全退出\n")
 
 
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(description="FAIRINO FR5 视觉伺服系统")
-    parser.add_argument('--config', type=str, default='config.yaml',
+    parser.add_argument('--config', type=str, default='config/config.yaml',
                        help='配置文件路径')
     parser.add_argument('--dictionary', type=str, default=None,
                        help='ArUco字典（覆盖配置文件）')
