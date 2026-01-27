@@ -31,11 +31,11 @@ logs/
 servo_logs/
 
 # 配置文件（包含个人标定数据，不上传）
-config/config.yaml
-!config/config.yaml.example
-handeye_result.txt
-tool_frame_params.txt
-realsense_neican.txt
+# config/config.yaml
+# !config/config.yaml.example
+# handeye_result.txt
+# tool_frame_params.txt
+# realsense_neican.txt
 
 # # 保留配置模板
 # !config/config.yaml.example
