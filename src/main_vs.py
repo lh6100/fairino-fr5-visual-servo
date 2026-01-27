@@ -7,6 +7,12 @@ main_vs.py - FAIRINO FR5 + RealSense D435i 视觉伺服主程序
 
 import sys
 import os
+from pathlib import Path
+
+# 添加项目根目录到路径，以便导入fairino模块
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
+
 import argparse
 import yaml
 import time
@@ -18,9 +24,11 @@ import pyrealsense2 as rs
 from visual_servo.fr5_driver import FR5Driver
 from visual_servo.aruco_detector import ArucoDetector
 from visual_servo.controller import VisualServoController
+from visual_servo.controller_absolute import AbsolutePoseController
 from visual_servo.handeye_io import load_handeye_transform, save_calibration_sample
 from visual_servo.utils_math import build_transform_matrix
 from visual_servo.realtime_plotter import RealtimePlotter
+from scipy.spatial.transform import Rotation as R
 
 
 class VisualServoSystem:
@@ -46,8 +54,11 @@ class VisualServoSystem:
         self.pipeline = None
         self.detector = None
         self.controller = None
+        self.absolute_controller = None  # 绝对位姿控制器
         self.plotter = None  # 实时绘图器
-        self.plotter = None  # 实时绘图器
+        
+        # 控制模式
+        self.use_absolute_mode = True  # 使用绝对位姿模式（mode=0）
         
         # 线程控制
         self.running = False
@@ -167,6 +178,18 @@ class VisualServoSystem:
             cx=intrinsics[0, 2],
             cy=intrinsics[1, 2]
         )
+        
+        # 初始化绝对位姿控制器
+        if self.use_absolute_mode:
+            ctrl_cfg = self.config.get('controller', {})
+            self.absolute_controller = AbsolutePoseController(
+                max_vel_mm_s=ctrl_cfg.get('absolute_max_vel_mm_s', 50.0),
+                max_rot_deg_s=ctrl_cfg.get('absolute_max_rot_deg_s', 20.0),
+                acc_mm_s2=ctrl_cfg.get('absolute_acc_mm_s2', 200.0),
+                acc_rot_deg_s2=ctrl_cfg.get('absolute_acc_rot_deg_s2', 80.0)
+            )
+            print("[INFO] 绝对位姿控制器已初始化 (mode=0)")
+
     
     def vision_loop(self):
         """视觉线程（30Hz 外环）"""
@@ -280,45 +303,138 @@ class VisualServoSystem:
         error_count = 0  # ServoCart错误计数
         error_threshold = 10  # 连续错误阈值
         
+        # 稀疏读取位姿策略（减少阻塞，提升平滑度）
+        pose_read_interval = 5  # 每5个周期读一次实际位姿（约80ms一次）
+        last_read_pose = None   # 上次读取的实际位姿
+        last_target_pose = None # 上次目标位姿（用于累积）
+        
         while self.running:
             tick_start = time.perf_counter()
             
             try:
                 # 获取伺服指令（仅当伺服使能时）
                 if self.servo_enabled:
-                    desc_pos = self.controller.get_servo_command(dt=dt)
+                    if self.use_absolute_mode:
+                        # ===== 绝对位姿控制模式 (mode=0) =====
+                        # 1. 稀疏读取TCP位姿（减少阻塞）
+                        should_read_pose = (tick_count % pose_read_interval == 0) or (last_read_pose is None)
+                        
+                        if should_read_pose:
+                            tcp_pose_dict = self.robot.get_tcp_pose()
+                            if tcp_pose_dict is None:
+                                tick_count += 1
+                                time.sleep(max(0, dt - (time.perf_counter() - tick_start)))
+                                continue
+                            last_read_pose = np.hstack([tcp_pose_dict['xyz'], tcp_pose_dict['rpy']])
+                            # 读取后重置累积，从实际位置重新开始
+                            current_pose = last_read_pose
+                            last_target_pose = None  # 清除累积
+                        else:
+                            # 使用上次目标位姿作为当前位姿（减少阻塞）
+                            if last_target_pose is not None:
+                                current_pose = last_target_pose
+                            else:
+                                current_pose = last_read_pose
+                        
+                        # 2. 获取检测数据并计算相机系twist
+                        with self.vision_lock:
+                            det = self.latest_detection.copy()
+                        
+                        if det['detected']:
+                            twist_cam, ts = self.controller.compute_twist_from_detection(det)
+                            self.controller.update_twist(twist_cam, ts)
+                            
+                            # 检查是否在死区内（误差足够小则停止运动）
+                            u, v = det['center_px']
+                            ex = abs(u - self.controller.cx)
+                            ey = abs(v - self.controller.cy)
+                            ez = abs(det['tvec'][2] - self.controller.z_des) * 1000.0  # mm
+                            
+                            deadband_px = self.config['controller'].get('deadband_px', 5.0)
+                            deadband_mm = self.config['controller'].get('deadband_mm', 5.0)
+                            
+                            in_deadband = (ex < deadband_px and ey < deadband_px and ez < deadband_mm)
+                            
+                            if twist_cam is not None and not in_deadband:
+                                # 3. 计算相机到基坐标系的旋转矩阵
+                                # 使用当前位姿的姿态角计算旋转
+                                R_base_tool = R.from_euler('xyz', np.deg2rad(current_pose[3:6])).as_matrix()
+                                R_cam_base = R_base_tool @ self.controller.R_tool_cam
+                                
+                                # 4. 计算目标绝对位姿（含速度平滑）
+                                target_pose = self.absolute_controller.compute_target_pose_from_twist(
+                                    current_pose, twist_cam, R_cam_base, dt
+                                )
+                                
+                                # 保存目标位姿供下次累积使用
+                                last_target_pose = target_pose.copy()
+                                
+                                # 记录数据到绘图器（如果启用）
+                                if self.plotter is not None:
+                                    # 计算速度：当前位姿到目标位姿的差值除以dt
+                                    delta_pos = target_pose[:3] - current_pose[:3]
+                                    vx, vy, vz = delta_pos / dt  # mm/s
+                                    
+                                    # 获取图像误差
+                                    ez_full = (det['tvec'][2] - self.controller.z_des) * 1000.0  # mm
+                                    
+                                    self.plotter.add_data(vx, vy, vz, u - self.controller.cx, v - self.controller.cy, ez_full, time.time())
+                                
+                                # 调试：每1秒打印一次指令
+                                if tick_count % 125 == 0:
+                                    print(f"[DEBUG] 目标绝对位姿(mm,deg): "
+                                          f"[{target_pose[0]:+7.2f}, {target_pose[1]:+7.2f}, {target_pose[2]:+7.2f}, "
+                                          f"{target_pose[3]:+6.2f}, {target_pose[4]:+6.2f}, {target_pose[5]:+6.2f}]")
+                                
+                                # 5. 执行绝对运动
+                                success = self.robot.servo_cart_absolute(target_pose)
+                            elif in_deadband:
+                                # 在死区内：保持当前位姿不动
+                                success = True
+                                if tick_count % 125 == 0:
+                                    print(f"[DEBUG] 在死区内，停止运动 | err_px:[{ex:+5.1f}, {ey:+5.1f}] err_z:{ez:+5.1f}mm")
+                            else:
+                                success = True  # twist为None时不移动
+                        else:
+                            success = True  # 未检测到目标时不移动
                     
-                    # 下发指令
-                    if desc_pos is not None:
-                        # 记录数据到绘图器（如果启用）
-                        if self.plotter is not None:
-                            with self.vision_lock:
-                                det = self.latest_detection
-                            if det['detected']:
-                                # 计算速度（mm/s）
-                                vx = desc_pos[0] / dt  # mm/s
-                                vy = desc_pos[1] / dt
-                                vz = desc_pos[2] / dt
-                                
-                                # 获取图像误差
-                                u, v = det['center_px']
-                                ex = u - self.controller.cx
-                                ey = v - self.controller.cy
-                                ez = (det['tvec'][2] - self.controller.z_des) * 1000.0  # mm
-                                
-                                self.plotter.add_data(vx, vy, vz, ex, ey, ez, time.time())
+                    else:
+                        # ===== 增量控制模式 (mode=2, 原逻辑) =====
+                        desc_pos = self.controller.get_servo_command(dt=dt)
                         
-                        # 调试：每1秒打印一次指令
-                        if tick_count % 125 == 0:  # 125Hz -> 每秒1次
-                            print(f"[DEBUG] 工具系增量(mm,deg): "
-                                  f"[{desc_pos[0]:+6.3f}, {desc_pos[1]:+6.3f}, {desc_pos[2]:+6.3f}, "
-                                  f"{desc_pos[3]:+6.3f}, {desc_pos[4]:+6.3f}, {desc_pos[5]:+6.3f}]")
+                        # 下发指令
+                        if desc_pos is not None:
+                            # 记录数据到绘图器（如果启用）
+                            if self.plotter is not None:
+                                with self.vision_lock:
+                                    det = self.latest_detection
+                                if det['detected']:
+                                    # 计算速度（mm/s）
+                                    vx = desc_pos[0] / dt  # mm/s
+                                    vy = desc_pos[1] / dt
+                                    vz = desc_pos[2] / dt
+                                    
+                                    # 获取图像误差
+                                    u, v = det['center_px']
+                                    ex = u - self.controller.cx
+                                    ey = v - self.controller.cy
+                                    ez = (det['tvec'][2] - self.controller.z_des) * 1000.0  # mm
+                                    
+                                    self.plotter.add_data(vx, vy, vz, ex, ey, ez, time.time())
+                            
+                            # 调试：每1秒打印一次指令
+                            if tick_count % 125 == 0:  # 125Hz -> 每秒1次
+                                print(f"[DEBUG] 工具系增量(mm,deg): "
+                                      f"[{desc_pos[0]:+6.3f}, {desc_pos[1]:+6.3f}, {desc_pos[2]:+6.3f}, "
+                                      f"{desc_pos[3]:+6.3f}, {desc_pos[4]:+6.3f}, {desc_pos[5]:+6.3f}]")
+                            
+                            # 执行伺服运动
+                            success = self.robot.servo_cart(desc_pos)
+                        else:
+                            success = True
                         
-                        # 执行伺服运动
-                        success = self.robot.servo_cart(desc_pos)
-                        
-                        # Roll状态监控：每30个tick（约0.24秒）输出一次状态（仅在verbose模式）
-                        if self.config.get('debug', {}).get('verbose_log', False):
+                        # Roll状态监控（仅增量模式使用）
+                        if not self.use_absolute_mode and self.config.get('debug', {}).get('verbose_log', False):
                             self.roll_debug_counter += 1
                             if self.roll_debug_counter >= 30 and self.config['target'].get('enable_roll', False):
                                 with self.vision_lock:
@@ -329,7 +445,7 @@ class VisualServoSystem:
                                     print(f"[ROLL_STATUS] 当前状态: roll={np.rad2deg(roll):+7.2f}° | 最后命令: drx={desc_pos[3]:+7.3f}° | 控制增益: k_roll={self.controller.k_roll}")
                                 self.roll_debug_counter = 0
                         
-                        # 错误处理
+                        # 错误处理（两种模式通用）
                         if not success:
                             error_count += 1
                             if error_count == 1:  # 第一次出错时提示

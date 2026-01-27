@@ -2,6 +2,7 @@
 import argparse
 import json
 import math
+import sys
 import time
 from pathlib import Path
 from dataclasses import dataclass
@@ -10,6 +11,9 @@ from typing import List, Tuple
 import cv2
 import numpy as np
 import pyrealsense2 as rs
+
+# 添加项目根目录到路径以导入fairino
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 try:
     from fairino import Robot

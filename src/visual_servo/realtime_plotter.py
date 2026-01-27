@@ -98,10 +98,6 @@ class RealtimePlotter:
         
         # 创建figure和subplots
         self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(12, 8))
-        try:
-            self.fig.canvas.manager.set_window_title('Visual Servo Real-time Monitor')
-        except:
-            pass
         
         # 子图1：速度曲线
         self.ax1.set_title('Flange Velocity (Tool Frame)', fontsize=12, fontweight='bold')
@@ -132,6 +128,12 @@ class RealtimePlotter:
         
         # 调整布局
         plt.tight_layout()
+        
+        # 设置窗口标题
+        try:
+            self.fig.canvas.manager.set_window_title('Visual Servo Real-time Monitor')
+        except:
+            pass
         
         # 显示窗口（非阻塞）
         plt.show(block=False)

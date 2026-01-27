@@ -73,6 +73,10 @@ class FR5Driver:
             return False
         
         try:
+            # 先清除所有错误状态
+            self.robot.ResetAllError()
+            time.sleep(0.05)  # 等待错误清除生效
+            
             err = self.robot.ServoMoveStart()
             if err == 0:
                 self.is_servo_started = True
@@ -100,9 +104,56 @@ class FR5Driver:
         except Exception as e:
             print(f"[ERROR] 结束伺服异常: {e}")
     
+    def servo_cart_absolute(self, target_pose):
+        """
+        笛卡尔伺服（绝对位姿模式）
+        
+        Args:
+            target_pose: 目标绝对位姿 [x, y, z, rx, ry, rz]
+                        平移单位 mm，旋转单位 deg，基坐标系
+        Returns:
+            bool: 是否成功
+        """
+        if not self.is_servo_started:
+            print("[ERROR] 伺服模式未启动！")
+            return False
+        
+        try:
+            # 调用 SDK 接口
+            # ServoCart(mode, desc_pos, pos_gain, acc, vel, cmdT, filterT, gain)
+            # mode=0: 基坐标系绝对位姿
+            err = self.robot.ServoCart(
+                mode=0,
+                desc_pos=target_pose.tolist() if isinstance(target_pose, np.ndarray) else target_pose,
+                pos_gain=[0.5, 0.5, 0.5, 0.5, 0.5, 0.5],  # 降低增益避免抖动
+                acc=0.0,
+                vel=0.0,
+                cmdT=self.cmdT,
+                filterT=0.0,
+                gain=0.0
+            )
+            
+            if err != 0:
+                if err == 14:
+                    try:
+                        self.robot.ResetAllError()
+                    except:
+                        pass
+                    print(f"[WARNING] ServoCart 返回错误码: {err}，已尝试清除错误")
+                elif err == 112:
+                    pass  # 静默处理
+                else:
+                    print(f"[WARNING] ServoCart 返回错误码: {err}")
+                return False
+            
+            return True
+        except Exception as e:
+            print(f"[ERROR] ServoCart 异常: {e}")
+            return False
+    
     def servo_cart(self, desc_pos):
         """
-        笛卡尔伺服（增量模式）
+        笛卡尔伺服（增量模式）- 保留向后兼容
         
         Args:
             desc_pos: 增量位姿 [dx, dy, dz, drx, dry, drz]
@@ -121,7 +172,7 @@ class FR5Driver:
             err = self.robot.ServoCart(
                 mode=2,
                 desc_pos=desc_pos.tolist() if isinstance(desc_pos, np.ndarray) else desc_pos,
-                pos_gain=[1.0, 1.0, 1.0, 1.0, 1.0, 1.0],  # 位置+姿态增益 [x,y,z,rx,ry,rz]
+                pos_gain=[0.3, 0.3, 0.3, 0.3, 0.3, 0.3],  # 降低增益避免错误14
                 acc=0.0,  # 加速度（由机器人内部控制）
                 vel=0.0,  # 速度（由机器人内部控制）
                 cmdT=self.cmdT,
@@ -130,8 +181,16 @@ class FR5Driver:
             )
             
             if err != 0:
+                # 错误码14：指令执行失败 - 可能是之前的错误状态未清除
+                if err == 14:
+                    # 尝试清除错误状态
+                    try:
+                        self.robot.ResetAllError()
+                    except:
+                        pass
+                    print(f"[WARNING] ServoCart 返回错误码: {err}，已尝试清除错误")
                 # 错误码112：目标位姿无法到达（可能接近奇异点或工作空间边界）
-                if err == 112:
+                elif err == 112:
                     # 不打印过多警告，返回False让控制器自动降速
                     pass  # 静默处理，避免刷屏
                 else:
@@ -158,7 +217,7 @@ class FR5Driver:
             return None
         
         try:
-            err, pose = self.robot.GetActualTCPPose(tool, user)
+            err, pose = self.robot.GetActualTCPPose(0)
             if err == 0:
                 # pose 格式: [x, y, z, rx, ry, rz]（单位 mm, deg）
                 return {
